@@ -62,7 +62,6 @@ team_t team = {
 #define PREV_BLKP(bp) ((char *)(bp) - GET_SIZE(((char *)(bp) - DSIZE)))
 
 static char* heap_listp;
-static char* next_ptr;
 
 static void *coalesce(void *bp);
 static void *extend_heap(size_t words);
@@ -85,7 +84,6 @@ int mm_init(void)
     PUT(heap_listp + (2*WSIZE), PACK(DSIZE, 1));
     PUT(heap_listp + (3*WSIZE), PACK(0, 1));
     heap_listp += (2*WSIZE);
-    next_ptr = NEXT_BLKP(heap_listp);
     if(extend_heap(CHUNKSIZE/WSIZE) == NULL)
         return -1;
     return 0;
@@ -109,25 +107,14 @@ static void *extend_heap(size_t words)
 }
 
 char* find_fit(size_t asize){
-    // next_fit 으로 
-    // next_fit = 이전에 할당했던 위치의 다음 위치부터 찾기
-    // 이전에 할당했던 위치를 저장해 놔야 함 전역 변수 하나 쓰자
-    // prev_allocated 라는 전역 변수 하나 만들고 mm_init 할 때 heap_listp 가리키게 해 놓음
-    // 탐색의 시작 위치는 next_ptr
-    char *bp = next_ptr;
-    // next_ptr ~ 끝까지
-    while(GET_SIZE(HDRP(bp)) > 0){
-        if(GET_SIZE(HDRP(bp)) >= asize && !GET_ALLOC(HDRP(bp))){
-            next_ptr = bp;
-            return bp;
-        }
-        bp = NEXT_BLKP(bp);
-    }
-    // 시작부터 ~ next_ptr 까지
-    bp = NEXT_BLKP(heap_listp);
-    while(GET_SIZE(HDRP(bp)) > 0 && bp != next_ptr){
-        if(GET_SIZE(HDRP(bp)) >= asize && !GET_ALLOC(HDRP(bp))){
-            next_ptr = bp;
+    // 탐색은 heap_listp = prologue이므로 NEXT_BLKP(heap_listp)부터 시작
+    char *bp = NEXT_BLKP(heap_listp);
+    char *hdrp = HDRP(bp);
+    // GET_SIZE(bp) 0 일 때 == 에필로그 일 때
+    while(GET_SIZE(hdrp) != 0){
+        hdrp = HDRP(bp);
+        // 가용 상태이고, 담을 수 있는 크기 일 때
+        if(GET_ALLOC(hdrp) == 0 && GET_SIZE(hdrp) >= asize){
             return bp;
         }
         bp = NEXT_BLKP(bp);
@@ -208,25 +195,19 @@ static void *coalesce(void *bp)
     size_t prev_alloc = GET_ALLOC(FTRP(PREV_BLKP(bp)));
     size_t next_alloc = GET_ALLOC(HDRP(NEXT_BLKP(bp)));
     size_t size = GET_SIZE(HDRP(bp));
-    
+
     // case 1
     if(prev_alloc && next_alloc){
         return bp;
     }
     // case 2
     else if(prev_alloc && !next_alloc){
-        if (next_ptr == NEXT_BLKP(bp)){
-            next_ptr = bp;
-        }
         size += GET_SIZE(HDRP(NEXT_BLKP(bp)));
         PUT(HDRP(bp), PACK(size, 0));
         PUT(FTRP(bp), PACK(size, 0));
     }
     // case 3
     else if(!prev_alloc && next_alloc){
-        if (next_ptr == bp){
-            next_ptr = PREV_BLKP(bp);
-        }
         size += GET_SIZE(HDRP(PREV_BLKP(bp)));
         PUT(FTRP(bp), PACK(size, 0));
         PUT(HDRP(PREV_BLKP(bp)), PACK(size, 0));
@@ -234,10 +215,7 @@ static void *coalesce(void *bp)
     }
     // case 4
     else{
-        if(next_ptr == bp || next_ptr == NEXT_BLKP(bp)){
-            next_ptr = PREV_BLKP(bp);
-        }
-        size += GET_SIZE(HDRP(NEXT_BLKP(bp))) + GET_SIZE(HDRP(PREV_BLKP(bp)));
+        size += GET_SIZE(FTRP(NEXT_BLKP(bp))) + GET_SIZE(HDRP(PREV_BLKP(bp)));
         PUT(HDRP(PREV_BLKP(bp)), PACK(size, 0));
         PUT(FTRP(NEXT_BLKP(bp)), PACK(size, 0));
         bp = PREV_BLKP(bp);

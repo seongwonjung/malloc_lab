@@ -47,6 +47,7 @@ team_t team = {
 #define CHUNKSIZE (1<<12)
 
 #define MAX(x, y) (x > y) ? (x) : (y)
+#define MIN(x, y) (x < y) ? (x) : (y)
 
 #define PACK(size, alloc) ((size) | (alloc))
 #define GET(p) (*(unsigned int *) (p))
@@ -62,7 +63,6 @@ team_t team = {
 #define PREV_BLKP(bp) ((char *)(bp) - GET_SIZE(((char *)(bp) - DSIZE)))
 
 static char* heap_listp;
-static char* next_ptr;
 
 static void *coalesce(void *bp);
 static void *extend_heap(size_t words);
@@ -85,7 +85,6 @@ int mm_init(void)
     PUT(heap_listp + (2*WSIZE), PACK(DSIZE, 1));
     PUT(heap_listp + (3*WSIZE), PACK(0, 1));
     heap_listp += (2*WSIZE);
-    next_ptr = NEXT_BLKP(heap_listp);
     if(extend_heap(CHUNKSIZE/WSIZE) == NULL)
         return -1;
     return 0;
@@ -109,30 +108,30 @@ static void *extend_heap(size_t words)
 }
 
 char* find_fit(size_t asize){
-    // next_fit 으로 
-    // next_fit = 이전에 할당했던 위치의 다음 위치부터 찾기
-    // 이전에 할당했던 위치를 저장해 놔야 함 전역 변수 하나 쓰자
-    // prev_allocated 라는 전역 변수 하나 만들고 mm_init 할 때 heap_listp 가리키게 해 놓음
-    // 탐색의 시작 위치는 next_ptr
-    char *bp = next_ptr;
-    // next_ptr ~ 끝까지
-    while(GET_SIZE(HDRP(bp)) > 0){
-        if(GET_SIZE(HDRP(bp)) >= asize && !GET_ALLOC(HDRP(bp))){
-            next_ptr = bp;
-            return bp;
+    // best-fit 으로
+    /*
+    아이디어:
+    NEXT_BLKP(heap_listp) 부터 끝까지 순회 하면서 asize에 딱 맞는 블럭을 찾으면 된다.
+    넣을 수 있는 공간이 나왔을 때, best_fit을 갱신해주자
+    */
+    char* ptr = NEXT_BLKP(heap_listp);
+    char* best_ptr = NULL;
+    // size_t best_fit = CHUNKSIZE;
+    size_t best_fit = (size_t)-1;
+    while(GET_SIZE(HDRP(ptr)) != 0){
+        if(!GET_ALLOC(HDRP(ptr))){
+            // 사이즈가 딱 맞으면 바로 return
+            size_t cur_size = GET_SIZE(HDRP(ptr));
+            if (cur_size == asize){
+                return ptr;
+            }else if(best_fit > cur_size && cur_size > asize){
+                best_fit = cur_size;
+                best_ptr = ptr;
+            }
         }
-        bp = NEXT_BLKP(bp);
+        ptr = NEXT_BLKP(ptr);
     }
-    // 시작부터 ~ next_ptr 까지
-    bp = NEXT_BLKP(heap_listp);
-    while(GET_SIZE(HDRP(bp)) > 0 && bp != next_ptr){
-        if(GET_SIZE(HDRP(bp)) >= asize && !GET_ALLOC(HDRP(bp))){
-            next_ptr = bp;
-            return bp;
-        }
-        bp = NEXT_BLKP(bp);
-    }
-    return NULL;
+    return best_ptr;
 }
 
 void place(char* bp, size_t asize){
@@ -215,18 +214,12 @@ static void *coalesce(void *bp)
     }
     // case 2
     else if(prev_alloc && !next_alloc){
-        if (next_ptr == NEXT_BLKP(bp)){
-            next_ptr = bp;
-        }
         size += GET_SIZE(HDRP(NEXT_BLKP(bp)));
         PUT(HDRP(bp), PACK(size, 0));
         PUT(FTRP(bp), PACK(size, 0));
     }
     // case 3
     else if(!prev_alloc && next_alloc){
-        if (next_ptr == bp){
-            next_ptr = PREV_BLKP(bp);
-        }
         size += GET_SIZE(HDRP(PREV_BLKP(bp)));
         PUT(FTRP(bp), PACK(size, 0));
         PUT(HDRP(PREV_BLKP(bp)), PACK(size, 0));
@@ -234,9 +227,6 @@ static void *coalesce(void *bp)
     }
     // case 4
     else{
-        if(next_ptr == bp || next_ptr == NEXT_BLKP(bp)){
-            next_ptr = PREV_BLKP(bp);
-        }
         size += GET_SIZE(HDRP(NEXT_BLKP(bp))) + GET_SIZE(HDRP(PREV_BLKP(bp)));
         PUT(HDRP(PREV_BLKP(bp)), PACK(size, 0));
         PUT(FTRP(NEXT_BLKP(bp)), PACK(size, 0));
