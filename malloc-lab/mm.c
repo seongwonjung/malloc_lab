@@ -26,9 +26,9 @@ team_t team = {
     /* Team name */
     "ateam",
     /* First member's full name */
-    "Harry Bovik",
+    "SeongWonJung",
     /* First member's email address */
-    "bovik@cs.cmu.edu",
+    "jsjsw0918@gmail.com",
     /* Second member's full name (leave blank if none) */
     "",
     /* Second member's email address (leave blank if none) */
@@ -61,8 +61,8 @@ team_t team = {
 #define NEXT_BLKP(bp) ((char *)(bp) + GET_SIZE(((char *)(bp) - WSIZE)))
 #define PREV_BLKP(bp) ((char *)(bp) - GET_SIZE(((char *)(bp) - DSIZE)))
 
-static char* heap_listp;
-static char* next_ptr;
+static char* heap_listp = NULL;
+static char* next_ptr = NULL;
 
 static void *coalesce(void *bp);
 static void *extend_heap(size_t words);
@@ -96,7 +96,7 @@ static void *extend_heap(size_t words)
     char *bp;
     size_t size;
 
-    /* Allocate an even number of words to maintain aligment */
+    // 
     size = (words%2) ? (words+1)*WSIZE : words*WSIZE;
     if((long)(bp = mem_sbrk(size)) == -1)
         return NULL;
@@ -108,11 +108,11 @@ static void *extend_heap(size_t words)
     return coalesce(bp);
 }
 
+//next_fit 방식 
 char* find_fit(size_t asize){
-    // next_fit 으로 
     // next_fit = 이전에 할당했던 위치의 다음 위치부터 찾기
     // 이전에 할당했던 위치를 저장해 놔야 함 전역 변수 하나 쓰자
-    // prev_allocated 라는 전역 변수 하나 만들고 mm_init 할 때 heap_listp 가리키게 해 놓음
+    // next_ptr 라는 전역 변수 하나 만들고 mm_init 할 때 heap_listp 가리키게 초기화
     // 탐색의 시작 위치는 next_ptr
     char *bp = next_ptr;
     // next_ptr ~ 끝까지
@@ -134,6 +134,51 @@ char* find_fit(size_t asize){
     }
     return NULL;
 }
+
+// // first-fit
+// char* find_fit(size_t asize){
+//     // 탐색은 heap_listp = prologue이므로 NEXT_BLKP(heap_listp)부터 시작
+//     char *bp = NEXT_BLKP(heap_listp);
+//     char *hdrp = HDRP(bp);
+//     // GET_SIZE(bp) 0 일 때 == 에필로그 일 때
+//     while(GET_SIZE(hdrp) != 0){
+//         hdrp = HDRP(bp);
+//         // 가용 상태이고, 담을 수 있는 크기 일 때
+//         if(GET_ALLOC(hdrp) == 0 && GET_SIZE(hdrp) >= asize){
+//             return bp;
+//         }
+//         bp = NEXT_BLKP(bp);
+//     }
+//     return NULL;
+// }
+
+// best-fit
+// char* find_fit(size_t asize){
+//     /*
+//     아이디어:
+//     NEXT_BLKP(heap_listp) 부터 끝까지 순회 하면서 asize에 딱 맞는 블럭을 찾으면 된다.
+//     넣을 수 있는 공간이 나왔을 때, best_fit을 갱신해주자
+//     */
+//     char* ptr = NEXT_BLKP(heap_listp);
+//     char* best_ptr = NULL;
+//     // size_t best_fit = CHUNKSIZE;
+//     size_t best_fit = (size_t)-1;
+//     while(GET_SIZE(HDRP(ptr)) != 0){
+//         if(!GET_ALLOC(HDRP(ptr))){
+//             // 사이즈가 딱 맞으면 바로 return
+//             size_t cur_size = GET_SIZE(HDRP(ptr));
+//             if (cur_size == asize){
+//                 return ptr;
+//             }else if(best_fit > cur_size && cur_size > asize){
+//                 best_fit = cur_size;
+//                 best_ptr = ptr;
+//             }
+//         }
+//         ptr = NEXT_BLKP(ptr);
+//     }
+//     return best_ptr;
+// }
+
 
 void place(char* bp, size_t asize){
     size_t f_size = GET_SIZE(HDRP(bp));
@@ -179,16 +224,6 @@ void *mm_malloc(size_t size)
         return NULL;
     place(bp, asize);
     return bp;
-
-    // int newsize = ALIGN(size + SIZE_T_SIZE);
-    // void *p = mem_sbrk(newsize);
-    // if (p == (void *)-1)
-    //     return NULL;
-    // else
-    // {
-    //     *(size_t *)p = size;
-    //     return (void *)((char *)p + SIZE_T_SIZE);
-    // }
 }
 
 /*
@@ -250,17 +285,108 @@ static void *coalesce(void *bp)
  */
 void *mm_realloc(void *ptr, size_t size)
 {
-    void *oldptr = ptr;
-    void *newptr;
-    size_t copySize;
-
-    newptr = mm_malloc(size);
-    if (newptr == NULL)
+    // ptr == NULL -> mm_malloc, size == 0 -> mm_free
+    if (ptr == NULL) {
+        return mm_malloc(size);
+    }
+    if (size == 0) {
+        mm_free(ptr);
         return NULL;
-    copySize = *(size_t *)((char *)oldptr - SIZE_T_SIZE);
-    if (size < copySize)
+    }
+    
+    size_t old_size = GET_SIZE(HDRP(ptr));
+    size_t asize;
+    void *prev_ptr = PREV_BLKP(ptr);
+    void *next_ptr_val = NEXT_BLKP(ptr);
+    int prev_aloc = GET_ALLOC(HDRP(prev_ptr));
+    int next_aloc = GET_ALLOC(HDRP(next_ptr_val));
+    size_t prev_size = GET_SIZE(HDRP(prev_ptr));
+    size_t next_size = GET_SIZE(HDRP(next_ptr_val));
+    size_t total_size;
+
+    if (size <= DSIZE) {
+        asize = 2 * DSIZE;
+    } else {
+        // 8 배수 올림
+        asize = DSIZE * ((size + DSIZE + (DSIZE - 1)) / DSIZE);
+    }
+
+    // 복사할 데이터 크기 계산 -> min(이전 페이로드 크기, 새로 요청된 payload 크기)
+    size_t copySize = old_size - DSIZE;
+    if (size < copySize) {
         copySize = size;
-    memcpy(newptr, oldptr, copySize);
-    mm_free(oldptr);
-    return newptr;
+    }
+
+    // case 1: 요청한 크기가 기존 블록 크기와 같다면 바로 리턴
+    if (asize == old_size) {
+        return ptr;
+    }
+
+    // case 2: 축소하는 경우
+    if (asize < old_size) {
+        // 제자리에서 축소
+
+        place(ptr, asize);
+        return ptr;
+    }
+    
+    // 확장하는 경우
+    // Case 3.1: 다음 블록이 가용하고 공간이 충분한 경우
+    if (!next_aloc && (asize <= old_size + next_size)) {
+        total_size = old_size + next_size;
+        // 헤더만 전체 크기로 미리 설정하고 place 호출
+        PUT(HDRP(ptr), PACK(total_size, 0));
+        place(ptr, asize);
+        return ptr;
+    }
+
+    // Case 3.2: 다음 블록이 힙의 끝(에필로그)인 경우
+    else if (next_size == 0) {
+        // 필요한 추가 공간 계산
+        size_t needsize = asize - old_size;
+        // mem_sbrk로 필요한 만큼만 할당
+        if (mem_sbrk(needsize) == (void *)-1) {
+            return NULL;
+        }
+        // 현재 블럭의 헤더, 푸터 설정
+        PUT(HDRP(ptr), PACK(asize, 1));
+        PUT(FTRP(ptr), PACK(asize, 1));
+        // 새 에필로그 설정
+        PUT(HDRP(NEXT_BLKP(ptr)), PACK(0, 1));
+        return ptr;
+    }
+
+    // Case 3.3: 앞, 뒤 블록 모두 가용하고 공간이 충분한 경우
+    else if (!prev_aloc && !next_aloc && (asize <= old_size + prev_size + next_size)) {
+        total_size = old_size + prev_size + next_size;
+        memmove(prev_ptr, ptr, copySize);
+        // 헤더만 전체 크기로 미리 설정하고 place 호출
+        PUT(HDRP(prev_ptr), PACK(total_size, 0));
+        place(prev_ptr, asize);
+
+        next_ptr = prev_ptr;
+        return prev_ptr;
+    }
+    
+    // Case 3.4: 앞 블록만 가용하고 공간이 충분한 경우
+    else if (!prev_aloc && (asize <= old_size + prev_size)) {
+        total_size = old_size + prev_size;
+        memmove(prev_ptr, ptr, copySize);
+        // 헤더만 전체 크기로 미리 설정하고 place 호출
+        PUT(HDRP(prev_ptr), PACK(total_size, 0));
+        place(prev_ptr, asize);
+        next_ptr = prev_ptr;
+        return prev_ptr;
+    }
+
+    // Case 4: 위 모든 방법으로 확장 불가, 새로 할당
+    else {
+        void *new_ptr = mm_malloc(size);
+        if (new_ptr == NULL) {
+            return NULL;
+        }
+        memcpy(new_ptr, ptr, copySize);
+        mm_free(ptr);
+        return new_ptr;
+    }
 }
